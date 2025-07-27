@@ -90,6 +90,41 @@ async function run() {
       res.send(result);
     });
 
+    //user email find
+    app.get("/users/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = await usersCollection.findOne({ email });
+  res.send(user);
+});
+
+// User data update
+app.patch("/users/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+    const updatedData = req.body;
+
+    // আমরা email দিয়ে আপডেট করবো, ObjectId এর কোনো সমস্যা হবে না
+    const result = await usersCollection.updateOne(
+      { email: email },
+      { $set: updatedData }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.send({ success: true, message: "User updated successfully" });
+    } else {
+      res.send({ success: false, message: "No changes detected or user not found" });
+    }
+  } catch (error) {
+    console.error("Update user error:", error);
+    res.status(500).send({ error: "Failed to update user" });
+  }
+});
+
+
+
+   
+
+
     // ✅ Add more protected or public routes below as needed
 
   } catch (err) {
