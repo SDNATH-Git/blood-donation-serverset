@@ -120,6 +120,55 @@ app.patch("/users/:email", async (req, res) => {
   }
 });
 
+// 📌 Donor এর নিজের ডোনেশন রিকোয়েস্ট ফেচ (সর্বোচ্চ ৩টি)
+app.get("/donations", async (req, res) => {
+  try {
+    const { donorEmail, limit = 3, sort = "desc" } = req.query;
+    const query = donorEmail ? { donorEmail } : {};
+    const sortOrder = sort === "desc" ? -1 : 1;
+
+    const result = await requestCollection
+      .find(query)
+      .sort({ donationDate: sortOrder })
+      .limit(parseInt(limit))
+      .toArray();
+
+    res.send(result);
+  } catch (err) {
+    console.error("Fetch donor requests error:", err);
+    res.status(500).send({ message: "Failed to fetch donation requests" });
+  }
+});
+
+// 🛠️ Update donation request status or info
+app.patch("/donations/:id", async (req, res) => {
+  const { id } = req.params;
+  const updateData = req.body;
+
+  try {
+    const result = await requestCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+    res.send(result);
+  } catch (err) {
+    console.error("Update donation error:", err);
+    res.status(500).send({ message: "Failed to update donation request" });
+  }
+});
+// ❌ Delete donation request
+app.delete("/donations/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
+    res.send(result);
+  } catch (err) {
+    console.error("Delete donation error:", err);
+    res.status(500).send({ message: "Failed to delete donation request" });
+  }
+});
+
+
 
 
    
