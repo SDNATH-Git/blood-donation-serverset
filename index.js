@@ -22,7 +22,7 @@ const client = new MongoClient(uri, {
   },
 });
 
-// JWT Middleware
+// JWT Middleware: Token ভেরিফাই করার জন্য
 function verifyJWT(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).send({ message: "Unauthorized. Token missing." });
@@ -44,7 +44,6 @@ function verifyAdmin(req, res, next) {
   next();
 }
 
-// Main
 async function run() {
   try {
     const db = client.db("BloodDonationDB");
@@ -59,7 +58,7 @@ async function run() {
       res.send("🩸 Blood Donation Server is Running!");
     });
 
-    // 🔐 Create JWT
+    // JWT তৈরি করা
     app.post("/jwt", (req, res) => {
       const user = req.body;
       if (!user?.email || !user?.role) {
@@ -69,7 +68,7 @@ async function run() {
       res.send({ token });
     });
 
-    // 👤 Register User
+    // ইউজার রেজিস্ট্রেশন
     app.post("/users", async (req, res) => {
       const user = req.body;
       const existing = await usersCollection.findOne({ email: user.email });
@@ -79,20 +78,20 @@ async function run() {
       res.send(result);
     });
 
-    // 👀 Get user by email
+    // ইউজার তথ্য পাওয়া
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send(user);
     });
 
-    // 🔄 Update user
+    // ইউজার আপডেট
     app.patch("/users/:email", async (req, res) => {
       try {
         const email = req.params.email;
         const updatedData = req.body;
         const result = await usersCollection.updateOne(
-          { email: email },
+          { email },
           { $set: updatedData }
         );
         if (result.modifiedCount > 0) {
@@ -106,7 +105,7 @@ async function run() {
       }
     });
 
-    // 🔎 Donor search
+    // ডোনার সার্চ
     app.get("/users", async (req, res) => {
       try {
         const { bloodGroup, district, upazila } = req.query;
@@ -123,7 +122,7 @@ async function run() {
       }
     });
 
-    // 📥 Create donation request
+    // ডোনেশন রিকোয়েস্ট তৈরি
     app.post("/requests", async (req, res) => {
       try {
         const request = req.body;
@@ -137,7 +136,7 @@ async function run() {
       }
     });
 
-    // 👀 Get my donation requests
+    // নিজের ডোনেশন রিকোয়েস্ট গুলো পাওয়া
     app.get("/requests", async (req, res) => {
       const email = req.query.email;
       if (!email) return res.status(400).send({ message: "Email is required" });
@@ -146,7 +145,7 @@ async function run() {
         .find({
           $or: [
             { requestedBy: email },
-            { requesterEmail: email } // optional fallback
+            { requesterEmail: email } // fallback
           ]
         })
         .sort({ createdAt: -1 })
@@ -155,25 +154,55 @@ async function run() {
       res.send(result);
     });
 
-    // ✏️ Update donation request status (done, canceled, etc.)
+    // একক রিকোয়েস্ট পাওয়া
+    app.get("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const request = await requestCollection.findOne({ _id: new ObjectId(id) });
+        if (!request) return res.status(404).send({ message: "Request not found" });
+        res.send(request);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to fetch request" });
+      }
+    });
+
+    // রিকোয়েস্ট আপডেট করা (PATCH)
     app.patch("/requests/:id", async (req, res) => {
       const id = req.params.id;
-      const { status } = req.body;
-      const result = await requestCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
-      res.send(result);
+      const updateData = req.body;
+      try {
+        const result = await requestCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+        if (result.modifiedCount > 0) {
+          res.send({ success: true, message: "Request updated successfully" });
+        } else {
+          res.send({ success: false, message: "No changes detected or request not found" });
+        }
+      } catch (error) {
+        console.error("Update request error:", error);
+        res.status(500).send({ success: false, message: "Failed to update request" });
+      }
     });
 
-    // ❌ Delete a request
+    // রিকোয়েস্ট ডিলিট করা
     app.delete("/requests/:id", async (req, res) => {
       const id = req.params.id;
-      const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
-      res.send(result);
+      try {
+        const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
+        if (result.deletedCount > 0) {
+          res.send({ success: true, message: "Request deleted successfully" });
+        } else {
+          res.send({ success: false, message: "Request not found" });
+        }
+      } catch (error) {
+        console.error("Delete request error:", error);
+        res.status(500).send({ success: false, message: "Failed to delete request" });
+      }
     });
 
-    // 🛡️ Admin-only: get all requests
+    // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
     app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
       const result = await requestCollection.find().toArray();
       res.send(result);
