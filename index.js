@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB URI Setup
+// MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.y7n1te0.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -44,43 +44,22 @@ function verifyAdmin(req, res, next) {
   next();
 }
 
-// Main async function
+// Main
 async function run() {
   try {
     const db = client.db("BloodDonationDB");
 
-    const bloodCollection = db.collection("blood");
-    const requestCollection = db.collection("requests");
     const usersCollection = db.collection("users");
+    const requestCollection = db.collection("requests");
 
     console.log("✅ Connected to MongoDB");
 
+    // Root
     app.get("/", (req, res) => {
       res.send("🩸 Blood Donation Server is Running!");
     });
 
-   // Server-side route for donor search
-   app.get("/users", async (req, res) => {
-  try {
-    const { bloodGroup, district, upazila } = req.query;
-
-    const query = { status: "active" }; // শুধু active ডোনার
-
-    if (bloodGroup) query.blood = bloodGroup;
-    if (district) query.district = district;
-    if (upazila) query.upazila = upazila;
-
-    const users = await usersCollection.find(query).toArray();
-
-    res.send(users);
-  } catch (error) {
-    console.error("Error searching donors:", error);
-    res.status(500).send({ message: "Server error during donor search" });
-  }
-});
-
-
-    // ✅ Existing Routes Below:
+    // 🔐 Create JWT
     app.post("/jwt", (req, res) => {
       const user = req.body;
       if (!user?.email || !user?.role) {
@@ -90,6 +69,7 @@ async function run() {
       res.send({ token });
     });
 
+    // 👤 Register User
     app.post("/users", async (req, res) => {
       const user = req.body;
       const existing = await usersCollection.findOne({ email: user.email });
@@ -99,17 +79,14 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
-      const result = await requestCollection.find().toArray();
-      res.send(result);
-    });
-
+    // 👀 Get user by email
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       res.send(user);
     });
 
+    // 🔄 Update user
     app.patch("/users/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -129,77 +106,78 @@ async function run() {
       }
     });
 
-    app.get("/donations", async (req, res) => {
+    // 🔎 Donor search
+    app.get("/users", async (req, res) => {
       try {
-        const { donorEmail, limit = 3, sort = "desc" } = req.query;
-        const query = donorEmail ? { donorEmail } : {};
-        const sortOrder = sort === "desc" ? -1 : 1;
-        const result = await requestCollection
-          .find(query)
-          .sort({ donationDate: sortOrder })
-          .limit(parseInt(limit))
-          .toArray();
-        res.send(result);
-      } catch (err) {
-        console.error("Fetch donor requests error:", err);
-        res.status(500).send({ message: "Failed to fetch donation requests" });
+        const { bloodGroup, district, upazila } = req.query;
+        const query = { status: "active" };
+        if (bloodGroup) query.blood = bloodGroup;
+        if (district) query.district = district;
+        if (upazila) query.upazila = upazila;
+
+        const users = await usersCollection.find(query).toArray();
+        res.send(users);
+      } catch (error) {
+        console.error("Donor search error:", error);
+        res.status(500).send({ message: "Server error during donor search" });
       }
     });
 
-    app.patch("/donations/:id", async (req, res) => {
-      const { id } = req.params;
-      const updateData = req.body;
+    // 📥 Create donation request
+    app.post("/requests", async (req, res) => {
       try {
-        const result = await requestCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: updateData }
-        );
+        const request = req.body;
+        request.status = "pending";
+        request.createdAt = new Date();
+        const result = await requestCollection.insertOne(request);
         res.send(result);
       } catch (err) {
-        console.error("Update donation error:", err);
-        res.status(500).send({ message: "Failed to update donation request" });
+        console.error("Create request error:", err);
+        res.status(500).send({ error: "Something went wrong" });
       }
     });
 
-    app.delete("/donations/:id", async (req, res) => {
-      const { id } = req.params;
-      try {
-        const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
-        res.send(result);
-      } catch (err) {
-        console.error("Delete donation error:", err);
-        res.status(500).send({ message: "Failed to delete donation request" });
-      }
+    // 👀 Get my donation requests
+    app.get("/requests", async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ message: "Email is required" });
+
+      const result = await requestCollection
+        .find({
+          $or: [
+            { requestedBy: email },
+            { requesterEmail: email } // optional fallback
+          ]
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(result);
     });
-   
-   // GET /requests?email=donor@gmail.com
-app.get("/requests", async (req, res) => {
-  const email = req.query.email;
-  const result = await requestCollection.find({ requestedBy: email }).sort({ createdAt: -1 }).toArray();
-  res.send(result);
-});
 
-// PATCH /requests/:id → update status
-app.patch("/requests/:id", async (req, res) => {
-  const id = req.params.id;
-  const { status } = req.body;
-  const result = await requestCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { status } }
-  );
-  res.send(result);
-});
+    // ✏️ Update donation request status (done, canceled, etc.)
+    app.patch("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+      const result = await requestCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+      res.send(result);
+    });
 
-// DELETE /requests/:id
-app.delete("/requests/:id", async (req, res) => {
-  const id = req.params.id;
-  const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
-  res.send(result);
-});
+    // ❌ Delete a request
+    app.delete("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
 
-
-
-    // ✅ Add more routes as needed
+    // 🛡️ Admin-only: get all requests
+    app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
+      const result = await requestCollection.find().toArray();
+      res.send(result);
+    });
 
   } catch (err) {
     console.error("❌ MongoDB Connection Error:", err);
@@ -211,4 +189,3 @@ run().catch((err) => console.error("❌ Server Start Error:", err));
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });
-
