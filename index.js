@@ -171,6 +171,33 @@ async function run() {
         res.status(500).send({ message: "Failed to delete donation request" });
       }
     });
+   
+   // GET /requests?email=donor@gmail.com
+app.get("/requests", async (req, res) => {
+  const email = req.query.email;
+  const result = await requestCollection.find({ requestedBy: email }).sort({ createdAt: -1 }).toArray();
+  res.send(result);
+});
+
+// PATCH /requests/:id → update status
+app.patch("/requests/:id", async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+  const result = await requestCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status } }
+  );
+  res.send(result);
+});
+
+// DELETE /requests/:id
+app.delete("/requests/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
+
 
     // ✅ Add more routes as needed
 
