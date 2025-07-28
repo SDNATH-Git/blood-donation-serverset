@@ -202,6 +202,20 @@ async function run() {
       }
     });
 
+    // ইউজারের role ফেরত পাঠানো
+app.get("/users/role/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = await client.db("BloodDonationDB").collection("users").findOne({ email });
+
+  if (!user) {
+    return res.status(404).send({ role: null });
+  }
+
+  res.send({ role: user.role });
+});
+
+
+
     // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
     app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
       const result = await requestCollection.find().toArray();
