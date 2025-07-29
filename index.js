@@ -526,20 +526,17 @@ app.patch("/blogs/unpublish/:id", verifyJWT, verifyAdmin, async (req, res) => {
 
 // ব্লগ ডিলিট (admin only)
 app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
-  try {
-    const id = req.params.id;
-    if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid blog id" });
+  const id = req.params.id;
+  if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid blog id" });
 
-    const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount > 0) {
-      res.send({ success: true, message: "Blog deleted" });
-    } else {
-      res.send({ success: false, message: "Blog not found" });
-    }
-  } catch (err) {
-    res.status(500).send({ message: "Failed to delete blog" });
+  const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
+  if (result.deletedCount > 0) {
+    res.send({ success: true, message: "Blog deleted successfully" });
+  } else {
+    res.status(404).send({ success: false, message: "Blog not found" });
   }
 });
+
 
 // Publish Blog
 app.patch("/blogs/publish/:id", verifyJWT, verifyAdmin, async (req, res) => {
@@ -561,17 +558,40 @@ app.patch("/blogs/unpublish/:id", verifyJWT, verifyAdmin, async (req, res) => {
   res.send(result);
 });
 
-// Delete Blog
-app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
-  const id = req.params.id;
-  const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
-  res.send(result);
-});
+// // Delete Blog
+// app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
+//   const id = req.params.id;
+//   const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
+//   res.send(result);
+// });
+
+// // Update donation status (volunteer & admin)
+// app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
+//   const id = req.params.id;
+//   const { status } = req.body;
+
+//   const email = req.decoded.email;
+//   const user = await usersCollection.findOne({ email });
+
+//   if (!["admin", "volunteer"].includes(user?.role)) {
+//     return res.status(403).send({ message: "Forbidden" });
+//   }
+
+//   const result = await donationsCollection.updateOne(
+//     { _id: new ObjectId(id) },
+//     { $set: { donation_status: status } }
+//   );
+//   res.send(result);
+// });
 
 // Update donation status (volunteer & admin)
 app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
   const id = req.params.id;
   const { status } = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ message: "Invalid request id" });
+  }
 
   const email = req.decoded.email;
   const user = await usersCollection.findOne({ email });
@@ -580,12 +600,15 @@ app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
     return res.status(403).send({ message: "Forbidden" });
   }
 
-  const result = await donationsCollection.updateOne(
+  const result = await requestCollection.updateOne(
     { _id: new ObjectId(id) },
-    { $set: { donation_status: status } }
+    { $set: { status } }
   );
+
   res.send(result);
 });
+
+
 
 // route: GET /volunteer-requests
 // এই route এ update করো
