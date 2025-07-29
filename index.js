@@ -414,11 +414,6 @@ async function run() {
       }
     });
 
-    
-
-
-
-
     // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
     app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
       try {
@@ -429,6 +424,105 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch requests" });
       }
     });
+
+    // ব্লগ কালেকশন
+const blogsCollection = db.collection("blogs");
+
+// ব্লগ লিস্ট (status filter দিয়ে)
+app.get("/blogs", verifyJWT, async (req, res) => {
+  try {
+    const status = req.query.status;
+    const query = {};
+    if (status && status !== "all") {
+      query.status = status;
+    }
+    const blogs = await blogsCollection.find(query).sort({ createdAt: -1 }).toArray();
+    res.send(blogs);
+  } catch (err) {
+    res.status(500).send({ message: "Failed to fetch blogs" });
+  }
+});
+
+// ব্লগ তৈরি
+app.post("/blogs", verifyJWT, async (req, res) => {
+  try {
+    const blog = req.body;
+    blog.status = "draft";
+    blog.createdAt = new Date();
+    blog.updatedAt = new Date();
+    blog.authorEmail = req.decoded.email;
+    const result = await blogsCollection.insertOne(blog);
+    res.send({ success: true, insertedId: result.insertedId });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to create blog" });
+  }
+});
+
+// ব্লগ পাবলিশ করা (admin only)
+app.patch("/blogs/publish/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid blog id" });
+
+    const result = await blogsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "published", updatedAt: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      res.send({ success: true, message: "Blog published" });
+    } else {
+      res.send({ success: false, message: "Blog not found or already published" });
+    }
+  } catch (err) {
+    res.status(500).send({ message: "Failed to publish blog" });
+  }
+});
+
+// ব্লগ আনপাবলিশ করা (admin only)
+app.patch("/blogs/unpublish/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid blog id" });
+
+    const result = await blogsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "draft", updatedAt: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      res.send({ success: true, message: "Blog unpublished" });
+    } else {
+      res.send({ success: false, message: "Blog not found or already draft" });
+    }
+  } catch (err) {
+    res.status(500).send({ message: "Failed to unpublish blog" });
+  }
+});
+
+// ব্লগ ডিলিট (admin only)
+app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid blog id" });
+
+    const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount > 0) {
+      res.send({ success: true, message: "Blog deleted" });
+    } else {
+      res.send({ success: false, message: "Blog not found" });
+    }
+  } catch (err) {
+    res.status(500).send({ message: "Failed to delete blog" });
+  }
+});
+
+
+
+
+
+
+
+
+
 
   } catch (err) {
     console.error("❌ MongoDB Connection Error:", err);
