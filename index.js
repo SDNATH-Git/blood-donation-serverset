@@ -441,15 +441,33 @@ const verifyVolunteerOrAdmin = async (req, res, next) => {
     });
 
     // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
-    app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
-      try {
-        const result = await requestCollection.find().toArray();
-        res.send(result);
-      } catch (error) {
-        console.error("Get all requests error:", error);
-        res.status(500).send({ message: "Failed to fetch requests" });
-      }
-    });
+    // app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
+    //   try {
+    //     const result = await requestCollection.find().toArray();
+    //     res.send(result);
+    //   } catch (error) {
+    //     console.error("Get all requests error:", error);
+    //     res.status(500).send({ message: "Failed to fetch requests" });
+    //   }
+    // });
+
+    app.get("/all-requests", verifyJWT, async (req, res) => {
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (!user || (user.role !== "admin" && user.role !== "volunteer")) {
+    return res.status(403).send({ message: "Forbidden" });
+  }
+
+  try {
+    const result = await requestCollection.find().toArray();
+    res.send(result);
+  } catch (error) {
+    console.error("Get all requests error:", error);
+    res.status(500).send({ message: "Failed to fetch requests" });
+  }
+});
+
 
 
 
@@ -611,11 +629,10 @@ app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
 
 
 // route: GET /volunteer-requests
-// এই route এ update করো
 app.get('/volunteer-requests', verifyJWT, verifyVolunteerOrAdmin, async (req, res) => {
   try {
     const requests = await requestCollection.find({
-      status: { $in: ['pending', 'approved'] } // অথবা অন্য যেসব status দেখাতে চান
+      status: { $in: ['pending', 'approved'] } 
     }).toArray();
 
     res.send(requests);
