@@ -46,6 +46,19 @@ function verifyAdmin(req, res, next) {
   next();
 }
 
+
+
+// // middleware: verifyAdmin
+// const verifyAdmin = async (req, res, next) => {
+//   const email = req.decoded.email;
+//   const user = await usersCollection.findOne({ email });
+//   if (user?.role !== "admin") {
+//     return res.status(403).send({ message: "Forbidden" });
+//   }
+//   next();
+// };
+
+
 async function run() {
   try {
     const db = client.db("BloodDonationDB");
@@ -53,6 +66,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const requestCollection = db.collection("requests");
     const fundsCollection = db.collection("funds");
+    const blogsCollection = db.collection("blogs");
 
     console.log("✅ Connected to MongoDB");
 
@@ -83,6 +97,18 @@ async function run() {
       });
       res.send({ token });
     });
+
+ // নতুন middleware - volunteer বা admin উভয়ের জন্য access দিবে
+const verifyVolunteerOrAdmin = async (req, res, next) => {
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (!user || !["volunteer", "admin"].includes(user.role)) {
+    return res.status(403).send({ error: true, message: "forbidden access" });
+  }
+  next();
+};
+
 
     // ইউজার রেজিস্ট্রেশন
     app.post("/users", async (req, res) => {
@@ -425,8 +451,8 @@ async function run() {
       }
     });
 
-    // ব্লগ কালেকশন
-const blogsCollection = db.collection("blogs");
+
+
 
 // ব্লগ লিস্ট (status filter দিয়ে)
 app.get("/blogs", verifyJWT, async (req, res) => {
@@ -514,6 +540,70 @@ app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
     res.status(500).send({ message: "Failed to delete blog" });
   }
 });
+
+// Publish Blog
+app.patch("/blogs/publish/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  const id = req.params.id;
+  const result = await blogsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "published" } }
+  );
+  res.send(result);
+});
+
+// Unpublish Blog
+app.patch("/blogs/unpublish/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  const id = req.params.id;
+  const result = await blogsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "draft" } }
+  );
+  res.send(result);
+});
+
+// Delete Blog
+app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
+  const id = req.params.id;
+  const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
+// Update donation status (volunteer & admin)
+app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (!["admin", "volunteer"].includes(user?.role)) {
+    return res.status(403).send({ message: "Forbidden" });
+  }
+
+  const result = await donationsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { donation_status: status } }
+  );
+  res.send(result);
+});
+
+// route: GET /volunteer-requests
+// এই route এ update করো
+app.get('/volunteer-requests', verifyJWT, verifyVolunteerOrAdmin, async (req, res) => {
+  try {
+    const requests = await requestCollection.find({
+      status: { $in: ['pending', 'approved'] } // অথবা অন্য যেসব status দেখাতে চান
+    }).toArray();
+
+    res.send(requests);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch volunteer requests.' });
+  }
+});
+
+
+
+
 
 
 
