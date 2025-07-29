@@ -25,11 +25,13 @@ const client = new MongoClient(uri, {
 // JWT Middleware: Token ভেরিফাই করার জন্য
 function verifyJWT(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).send({ message: "Unauthorized. Token missing." });
+  if (!authHeader)
+    return res.status(401).send({ message: "Unauthorized. Token missing." });
 
   const token = authHeader.split(" ")[1];
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).send({ message: "Forbidden. Invalid token." });
+    if (err)
+      return res.status(403).send({ message: "Forbidden. Invalid token." });
     req.decoded = decoded;
     next();
   });
@@ -50,42 +52,102 @@ async function run() {
 
     const usersCollection = db.collection("users");
     const requestCollection = db.collection("requests");
+    const fundsCollection = db.collection("funds");
 
     console.log("✅ Connected to MongoDB");
 
-    // Root
+    // Root route
     app.get("/", (req, res) => {
       res.send("🩸 Blood Donation Server is Running!");
     });
 
-    // JWT তৈরি করা
-    app.post("/jwt", (req, res) => {
-      const user = req.body;
-      if (!user?.email || !user?.role) {
-        return res.status(400).send({ message: "Email and role required." });
+    // JWT তৈরি করা - এখানে ইউজারের role DB থেকে নিয়ে টোকেনে যোগ করবো
+    app.post("/jwt", async (req, res) => {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).send({ message: "Email is required." });
       }
-      const token = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+      const user = await usersCollection.findOne({ email });
+      if (!user) {
+        return res.status(404).send({ message: "User not found." });
+      }
+
+      const tokenPayload = {
+        email: user.email,
+        role: user.role || "donor",
+      };
+
+      const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
+        expiresIn: "7d",
+      });
       res.send({ token });
     });
 
     // ইউজার রেজিস্ট্রেশন
     app.post("/users", async (req, res) => {
-      const user = req.body;
-      const existing = await usersCollection.findOne({ email: user.email });
-      if (existing) return res.status(409).send({ message: "User already exists" });
-      user.createdAt = new Date();
-      const result = await usersCollection.insertOne(user);
-      res.send(result);
+      try {
+        const user = req.body;
+        if (!user.email) {
+          return res.status(400).send({ message: "Email is required" });
+        }
+        const existing = await usersCollection.findOne({ email: user.email });
+        if (existing)
+          return res.status(409).send({ message: "User already exists" });
+
+        // ডিফল্ট role ও status দেয়া
+        user.role = user.role || "donor";
+        user.status = user.status || "active";
+        user.createdAt = new Date();
+
+        const result = await usersCollection.insertOne(user);
+        res.send({ success: true, message: "User created", insertedId: result.insertedId });
+      } catch (error) {
+        console.error("User registration error:", error);
+        res.status(500).send({ message: "Failed to create user" });
+      }
     });
+
+    // users block unblock 
+    app.get("/users", async (req, res) => {
+    try {
+    const { bloodGroup, district, upazila, status } = req.query;
+    const query = {};
+
+    // status যদি থাকে এবং all না হয়, তখন সেট করবে
+    if (status && status !== "all") {
+      query.status = status;
+    }
+
+    if (bloodGroup) query.blood = bloodGroup;
+    if (district) query.district = district;
+    if (upazila) query.upazila = upazila;
+
+    const users = await usersCollection.find(query).toArray();
+    res.send(users);
+  } catch (error) {
+    console.error("Donor search error:", error);
+    res.status(500).send({ message: "Server error during donor search" });
+  }
+});
+
 
     // ইউজার তথ্য পাওয়া
     app.get("/users/:email", async (req, res) => {
-      const email = req.params.email;
-      const user = await usersCollection.findOne({ email });
-      res.send(user);
+      try {
+        const email = req.params.email;
+        const user = await usersCollection.findOne({ email });
+        if (!user)
+          return res.status(404).send({ message: "User not found" });
+        res.send(user);
+      } catch (error) {
+        console.error("Get user error:", error);
+        res.status(500).send({ message: "Failed to get user" });
+      }
     });
 
-    // ইউজার আপডেট
+
+    // ইউজার আপডেট (email দিয়ে)
     app.patch("/users/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -101,11 +163,11 @@ async function run() {
         }
       } catch (error) {
         console.error("Update user error:", error);
-        res.status(500).send({ error: "Failed to update user" });
+        res.status(500).send({ message: "Failed to update user" });
       }
     });
 
-    // ডোনার সার্চ
+    // ডোনার সার্চ (status active থাকা ইউজার)
     app.get("/users", async (req, res) => {
       try {
         const { bloodGroup, district, upazila } = req.query;
@@ -129,52 +191,62 @@ async function run() {
         request.status = "pending";
         request.createdAt = new Date();
         const result = await requestCollection.insertOne(request);
-        res.send(result);
+        res.send({ success: true, message: "Request created", insertedId: result.insertedId });
       } catch (err) {
         console.error("Create request error:", err);
-        res.status(500).send({ error: "Something went wrong" });
+        res.status(500).send({ message: "Something went wrong" });
       }
     });
 
-    // নিজের ডোনেশন রিকোয়েস্ট গুলো পাওয়া
+    // নিজের ডোনেশন রিকোয়েস্ট গুলো পাওয়া (email দিয়ে)
     app.get("/requests", async (req, res) => {
-      const email = req.query.email;
-      if (!email) return res.status(400).send({ message: "Email is required" });
+      try {
+        const email = req.query.email;
+        if (!email) return res.status(400).send({ message: "Email is required" });
 
-      const result = await requestCollection
-        .find({
-          $or: [
-            { requestedBy: email },
-            { requesterEmail: email } // fallback
-          ]
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
+        const result = await requestCollection
+          .find({
+            $or: [{ requestedBy: email }, { requesterEmail: email }],
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-      res.send(result);
+        res.send(result);
+      } catch (error) {
+        console.error("Get requests error:", error);
+        res.status(500).send({ message: "Failed to get requests" });
+      }
     });
 
-    // একক রিকোয়েস্ট পাওয়া
+    // একক রিকোয়েস্ট পাওয়া (id দিয়ে)
     app.get("/requests/:id", async (req, res) => {
-      const id = req.params.id;
       try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid request id" });
+
         const request = await requestCollection.findOne({ _id: new ObjectId(id) });
         if (!request) return res.status(404).send({ message: "Request not found" });
         res.send(request);
       } catch (err) {
+        console.error("Get request error:", err);
         res.status(500).send({ message: "Failed to fetch request" });
       }
     });
 
-    // রিকোয়েস্ট আপডেট করা (PATCH)
+    // রিকোয়েস্ট আপডেট (PATCH)
     app.patch("/requests/:id", async (req, res) => {
-      const id = req.params.id;
-      const updateData = req.body;
       try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid request id" });
+
+        const updateData = req.body;
         const result = await requestCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: updateData }
         );
+
         if (result.modifiedCount > 0) {
           res.send({ success: true, message: "Request updated successfully" });
         } else {
@@ -182,15 +254,19 @@ async function run() {
         }
       } catch (error) {
         console.error("Update request error:", error);
-        res.status(500).send({ success: false, message: "Failed to update request" });
+        res.status(500).send({ message: "Failed to update request" });
       }
     });
 
-    // রিকোয়েস্ট ডিলিট করা
+    // রিকোয়েস্ট ডিলিট (DELETE)
     app.delete("/requests/:id", async (req, res) => {
-      const id = req.params.id;
       try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid request id" });
+
         const result = await requestCollection.deleteOne({ _id: new ObjectId(id) });
+
         if (result.deletedCount > 0) {
           res.send({ success: true, message: "Request deleted successfully" });
         } else {
@@ -198,28 +274,160 @@ async function run() {
         }
       } catch (error) {
         console.error("Delete request error:", error);
-        res.status(500).send({ success: false, message: "Failed to delete request" });
+        res.status(500).send({ message: "Failed to delete request" });
       }
     });
 
     // ইউজারের role ফেরত পাঠানো
-app.get("/users/role/:email", async (req, res) => {
-  const email = req.params.email;
-  const user = await client.db("BloodDonationDB").collection("users").findOne({ email });
+    app.get("/users/role/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const user = await usersCollection.findOne({ email });
+        if (user) {
+          res.send({ role: user.role });
+        } else {
+          res.status(404).send({ role: null });
+        }
+      } catch (error) {
+        console.error("Get user role error:", error);
+        res.status(500).send({ message: "Failed to get user role" });
+      }
+    });
 
-  if (!user) {
-    return res.status(404).send({ role: null });
-  }
+    // Fund গুলো সব পাওয়া
+    app.get("/funds", async (req, res) => {
+      try {
+        const funds = await fundsCollection.find().toArray();
+        res.send(funds);
+      } catch (error) {
+        console.error("Get funds error:", error);
+        res.status(500).send({ message: "Failed to fetch funds" });
+      }
+    });
 
-  res.send({ role: user.role });
-});
+    // Fund যোগ করা
+    app.post("/funds", async (req, res) => {
+      try {
+        const fund = req.body;
+        fund.createdAt = new Date();
+        const result = await fundsCollection.insertOne(fund);
+        res.send({ success: true, message: "Fund added", insertedId: result.insertedId });
+      } catch (error) {
+        console.error("Add fund error:", error);
+        res.status(500).send({ message: "Failed to add fund" });
+      }
+    });
+
+    // =================
+    // USER ACTIONS (block, unblock, make volunteer/admin)
+    // =================
+
+    // block user: status -> "blocked"
+    app.patch("/users/block/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid user id" });
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "blocked" } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ success: true, message: "User blocked successfully" });
+        } else {
+          res.send({ success: false, message: "User not found or already blocked" });
+        }
+      } catch (error) {
+        console.error("Block user error:", error);
+        res.status(500).send({ message: "Failed to block user" });
+      }
+    });
+
+    // unblock user: status -> "active"
+    app.patch("/users/unblock/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid user id" });
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "active" } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ success: true, message: "User unblocked successfully" });
+        } else {
+          res.send({ success: false, message: "User not found or already active" });
+        }
+      } catch (error) {
+        console.error("Unblock user error:", error);
+        res.status(500).send({ message: "Failed to unblock user" });
+      }
+    });
+
+    // make volunteer: role -> "volunteer"
+    app.patch("/users/make-volunteer/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid user id" });
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "volunteer" } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ success: true, message: "User made volunteer successfully" });
+        } else {
+          res.send({ success: false, message: "User not found or already volunteer" });
+        }
+      } catch (error) {
+        console.error("Make volunteer error:", error);
+        res.status(500).send({ message: "Failed to make volunteer" });
+      }
+    });
+
+    // make admin: role -> "admin"
+    app.patch("/users/make-admin/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id))
+          return res.status(400).send({ message: "Invalid user id" });
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "admin" } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ success: true, message: "User made admin successfully" });
+        } else {
+          res.send({ success: false, message: "User not found or already admin" });
+        }
+      } catch (error) {
+        console.error("Make admin error:", error);
+        res.status(500).send({ message: "Failed to make admin" });
+      }
+    });
+
+    
+
 
 
 
     // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
     app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
-      const result = await requestCollection.find().toArray();
-      res.send(result);
+      try {
+        const result = await requestCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Get all requests error:", error);
+        res.status(500).send({ message: "Failed to fetch requests" });
+      }
     });
 
   } catch (err) {
