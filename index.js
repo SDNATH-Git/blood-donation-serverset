@@ -47,18 +47,6 @@ function verifyAdmin(req, res, next) {
 }
 
 
-
-// // middleware: verifyAdmin
-// const verifyAdmin = async (req, res, next) => {
-//   const email = req.decoded.email;
-//   const user = await usersCollection.findOne({ email });
-//   if (user?.role !== "admin") {
-//     return res.status(403).send({ message: "Forbidden" });
-//   }
-//   next();
-// };
-
-
 async function run() {
   try {
     const db = client.db("BloodDonationDB");
@@ -440,17 +428,7 @@ const verifyVolunteerOrAdmin = async (req, res, next) => {
       }
     });
 
-    // Admin-only: সব রিকোয়েস্ট দেখতে পারবে
-    // app.get("/all-requests", verifyJWT, verifyAdmin, async (req, res) => {
-    //   try {
-    //     const result = await requestCollection.find().toArray();
-    //     res.send(result);
-    //   } catch (error) {
-    //     console.error("Get all requests error:", error);
-    //     res.status(500).send({ message: "Failed to fetch requests" });
-    //   }
-    // });
-
+// Admin-only: সব রিকোয়েস্ট দেখতে পারবে
     app.get("/all-requests", verifyJWT, async (req, res) => {
   const email = req.decoded.email;
   const user = await usersCollection.findOne({ email });
@@ -467,9 +445,6 @@ const verifyVolunteerOrAdmin = async (req, res, next) => {
     res.status(500).send({ message: "Failed to fetch requests" });
   }
 });
-
-
-
 
 
 // ব্লগ লিস্ট (status filter দিয়ে)
@@ -555,6 +530,41 @@ app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
   }
 });
 
+// GET only published blogs
+app.get("/blogs/published", async (req, res) => {
+  try {
+    const publishedBlogs = await blogsCollection
+      .find({ status: "published" })
+      .toArray();
+    res.send(publishedBlogs);
+  } catch (error) {
+    console.error("Error fetching published blogs:", error);
+    res.status(500).send({ message: "Failed to fetch published blogs" });
+  }
+});
+
+// Single published blog by ID
+app.get("/blogs/publish/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const blog = await blogsCollection.findOne({
+      _id: new ObjectId(id),
+      status: "published", // Only if published
+    });
+
+    if (!blog) {
+      return res.status(404).send({ message: "Blog not found or not published." });
+    }
+
+    res.send(blog);
+  } catch (error) {
+    console.error("Error fetching published blog:", error);
+    res.status(500).send({ message: "Failed to fetch blog." });
+  }
+});
+
+
+
 
 // Publish Blog
 app.patch("/blogs/publish/:id", verifyJWT, verifyAdmin, async (req, res) => {
@@ -575,32 +585,6 @@ app.patch("/blogs/unpublish/:id", verifyJWT, verifyAdmin, async (req, res) => {
   );
   res.send(result);
 });
-
-// // Delete Blog
-// app.delete("/blogs/:id", verifyJWT, verifyAdmin, async (req, res) => {
-//   const id = req.params.id;
-//   const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
-//   res.send(result);
-// });
-
-// // Update donation status (volunteer & admin)
-// app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
-//   const id = req.params.id;
-//   const { status } = req.body;
-
-//   const email = req.decoded.email;
-//   const user = await usersCollection.findOne({ email });
-
-//   if (!["admin", "volunteer"].includes(user?.role)) {
-//     return res.status(403).send({ message: "Forbidden" });
-//   }
-
-//   const result = await donationsCollection.updateOne(
-//     { _id: new ObjectId(id) },
-//     { $set: { donation_status: status } }
-//   );
-//   res.send(result);
-// });
 
 // Update donation status (volunteer & admin)
 app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
@@ -625,7 +609,6 @@ app.patch("/donations/update-status/:id", verifyJWT, async (req, res) => {
 
   res.send(result);
 });
-
 
 
 // route: GET /volunteer-requests
