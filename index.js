@@ -3,6 +3,12 @@ const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const Stripe = require('stripe');
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const { v4: uuidv4 } = require('uuid');
+
+// মেমোরিতে ফান্ড ডেটা (ডাটাবেস না থাকলে)
+let funds = [];
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -55,6 +61,9 @@ async function run() {
     const requestCollection = db.collection("requests");
     const fundsCollection = db.collection("funds");
     const blogsCollection = db.collection("blogs");
+    const donationRequestsCollection = db.collection("donationRequests");
+    
+
 
     console.log("✅ Connected to MongoDB");
 
@@ -447,6 +456,8 @@ const verifyVolunteerOrAdmin = async (req, res, next) => {
 });
 
 
+
+
 // ব্লগ লিস্ট (status filter দিয়ে)
 app.get("/blogs", verifyJWT, async (req, res) => {
   try {
@@ -564,6 +575,54 @@ app.get("/blogs/publish/:id", async (req, res) => {
 });
 
 
+// Update blog by ID (title, content, thumbnailUrl)
+app.patch("/blogs/:id", verifyJWT, async (req, res) => {
+    const id = req.params.id;
+    const updatedBlog = req.body;
+
+    try {
+        const result = await blogsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+                $set: {
+                    title: updatedBlog.title,
+                    content: updatedBlog.content,
+                    thumbnailUrl: updatedBlog.thumbnailUrl || "",
+                },
+            }
+        );
+
+        if (result.modifiedCount > 0) {
+            res.send({ success: true });
+        } else {
+            res.status(404).send({ message: "Blog not updated." });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Internal Server Error" });
+    }
+});
+
+// GET blog by ID
+app.get("/blogs/:id", async (req, res) => {
+  const id = req.params.id;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid blog ID" });
+  }
+
+  try {
+    const blog = await blogsCollection.findOne({ _id: new ObjectId(id) });
+    if (!blog) {
+      return res.status(404).json({ message: "Blog not found" });
+    }
+    res.json(blog);
+  } catch (error) {
+    console.error("Error fetching blog by ID:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 
 
 // Publish Blog
@@ -624,8 +683,143 @@ app.get('/volunteer-requests', verifyJWT, verifyVolunteerOrAdmin, async (req, re
   }
 });
 
+// GET all pending blood donation requests (Public)
+app.get("/donations/pending", async (req, res) => {
+  try {
+    const pendingRequests = await requestCollection.find({ status: "pending" }).toArray();
+    res.send(pendingRequests);
+  } catch (error) {
+    console.error("Error fetching pending donations:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
+///
+app.get("/donations/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const donation = await requestCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!donation) {
+      return res.status(404).send({ message: "Donation request not found" });
+    }
+
+    res.send(donation);
+  } catch (error) {
+    console.error("Error fetching donation:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
+//////
+app.get("/all-requests", async (req, res) => {
+  try {
+    const requests = await requestCollection.find().toArray();
+    res.send(requests);
+  } catch (error) {
+    console.error("Error fetching requests:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
+// Update donation status (for donor)
+app.patch("/donations/start/:id", verifyJWT, async (req, res) => {
+  const id = req.params.id;
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (user?.status !== "active") {
+    return res.status(403).send({ message: "Only active users can donate" });
+  }
+
+  const result = await donationRequestsCollection.updateOne(
+    { _id: new ObjectId(id), status: "pending" },
+    { $set: { status: "inprogress", donorName: user.name, donorEmail: user.email } }
+  );
+
+  res.send(result);
+});
+
+// POST /create-payment-intent
+app.post("/create-payment-intent", async (req, res) => {
+    const { amount } = req.body;
+    const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount * 100, // Stripe works in cents
+        currency: "usd",
+        payment_method_types: ["card"],
+    });
+
+    res.send({ clientSecret: paymentIntent.client_secret });
+});
 
 
+// Payment Intent তৈরির রাউট
+app.post('/create-payment-intent', async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100), // ডলার থেকে সেন্টে
+      currency: "usd",
+      metadata: { integration_check: 'accept_a_payment' },
+    });
+
+    res.json(paymentIntent.client_secret);
+  } catch (error) {
+    console.error("PaymentIntent error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// ফান্ড ডেটা সেভ করার রাউট
+app.post('/funds', (req, res) => {
+  const { name, email, amount, date } = req.body;
+  if (!name || !email || !amount || !date) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  const newFund = {
+    _id: uuidv4(),
+    name,
+    email,
+    amount,
+    date,
+  };
+
+  funds.push(newFund);
+  res.status(201).json({ message: "Fund saved", fund: newFund });
+});
+
+// সব ফান্ড রিটার্ন করার রাউট
+app.get('/funds', (req, res) => {
+  res.json(funds);
+});
+
+
+///
+app.patch('/donations/start/:id', verifyJWT, async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    const result = await donationRequestsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: 'inprogress' } }
+    );
+
+    if (result.modifiedCount > 0) {
+      res.send({ message: "Donation started successfully." });
+    } else {
+      res.status(404).send({ message: "Request not found or already updated." });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Server error." });
+  }
+});
 
 
 
