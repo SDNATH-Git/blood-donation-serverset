@@ -822,6 +822,36 @@ app.patch('/donations/start/:id', verifyJWT, async (req, res) => {
 });
 
 
+// Dashboard Overview
+app.get("/dashboard-stats", verifyJWT, async (req, res) => {
+  const totalUsers = await usersCollection.estimatedDocumentCount();
+  const totalRequests = await requestCollection.estimatedDocumentCount();
+  const totalFunds = await fundsCollection.aggregate([
+    { $group: { _id: null, total: { $sum: "$amount" } } }
+  ]).toArray();
+
+  const pending = await requestCollection.countDocuments({ status: "pending" });
+  const inprogress = await requestCollection.countDocuments({ status: "inprogress" });
+  const done = await requestCollection.countDocuments({ status: "done" });
+  const canceled = await requestCollection.countDocuments({ status: "canceled" });
+
+  const admins = await usersCollection.countDocuments({ role: "admin" });
+  const volunteers = await usersCollection.countDocuments({ role: "volunteer" });
+  const donors = await usersCollection.countDocuments({ role: "donor" });
+
+  res.send({
+    totalUsers,
+    totalRequests,
+    totalFunds: totalFunds[0]?.total || 0,
+    pending,
+    inprogress,
+    done,
+    canceled,
+    admins,
+    volunteers,
+    donors
+  });
+});
 
 
 
